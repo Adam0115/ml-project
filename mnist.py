@@ -7,20 +7,21 @@ import numpy as np
 import tkinter as tk
 from tkinter import Label, Button
 from PIL import Image, ImageTk
-import threading
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
-# 1. 載入資料
+# 1. Load dataset
 (x_train, y_train), (x_test, y_test) = mnist.load_data()
 
-# 2. 前處理
+# 2. Preprocessing
 x_train = x_train / 255.0
 x_test = x_test / 255.0
 y_train = to_categorical(y_train, 10)
 y_test = to_categorical(y_test, 10)
 
-# 3. 建立模型
+print(f"Train samples: {len(x_train)}, Test samples: {len(x_test)}")
+
+# 3. Build model (MLP)
 model = Sequential([
     Flatten(input_shape=(28, 28)),
     Dense(128, activation='relu'),
@@ -31,19 +32,25 @@ model.compile(optimizer='adam',
               loss='categorical_crossentropy',
               metrics=['accuracy'])
 
-# 4. 訓練模型
-model.fit(x_train, y_train, epochs=5, batch_size=32, validation_split=0.1)
+# 4. Train model and record history
+history = model.fit(
+    x_train, y_train,
+    epochs=20,
+    batch_size=32,
+    validation_split=0.1,
+    verbose=2
+)
 
-# 5. 預測測試集
+# 5. Predict test set
 y_pred = model.predict(x_test)
 
-# 6. 找出錯誤案例索引
+# 6. Find wrong prediction indices
 wrong_indices = [i for i in range(len(x_test)) 
                  if np.argmax(y_test[i]) != np.argmax(y_pred[i])]
 
-# 狀態變數
+# GUI state variables
 index = 0
-mode = "all"  # 可選 "all" 或 "wrong"
+mode = "all"
 
 def get_current_indices():
     return range(len(x_test)) if mode == "all" else wrong_indices
@@ -52,14 +59,13 @@ def show_image(idx):
     global img_tk
     img = (x_test[idx] * 255).astype(np.uint8)
     img = Image.fromarray(img)
-    img = img.resize((200, 200))  # 放大顯示
+    img = img.resize((200, 200))
     img_tk = ImageTk.PhotoImage(img)
     label_img.config(image=img_tk)
 
     true_label = np.argmax(y_test[idx])
     pred_label = np.argmax(y_pred[idx])
 
-    # 標題顏色提示：正確 → 綠色，錯誤 → 紅色
     if true_label == pred_label:
         label_text.config(text=f"T:{true_label}, P:{pred_label}", fg="green")
     else:
@@ -90,9 +96,9 @@ def switch_mode(new_mode):
         label_text.config(text="No wrong cases found!", fg="black")
         label_img.config(image="")
 
-# 建立 Tkinter 視窗
+# Tkinter window
 root = tk.Tk()
-root.title("MNIST Browser (← → to flip, mode switch)")
+root.title("MNIST Browser")
 
 label_img = Label(root)
 label_img.pack()
@@ -111,29 +117,50 @@ root.bind("<Left>", prev_image)
 
 switch_mode("all")
 
-# ✅ 新增：在另一個 thread 顯示混淆矩陣
+# Run Tkinter main loop
+root.mainloop()
+
+# ---- After closing Tkinter, show analysis ----
 def show_confusion_matrix():
-    test_loss, test_acc = model.evaluate(x_test, y_test, verbose=2)
-    print(f"Test accuracy: {test_acc:.4f}, Test loss: {test_loss:.4f}")
-
-    total_samples = len(x_test)
-    wrong_count = len(wrong_indices)
-    correct_count = total_samples - wrong_count
-    accuracy = correct_count / total_samples * 100
-    error_rate = wrong_count / total_samples * 100
-
-    print(f"Total: {total_samples} | Correct: {correct_count} | Wrong: {wrong_count} | Accuracy: {accuracy:.2f}% | Error Rate: {error_rate:.2f}%")
-
     y_true = np.argmax(y_test, axis=1)
     y_pred_classes = np.argmax(y_pred, axis=1)
 
     cm = confusion_matrix(y_true, y_pred_classes)
+    fig, ax = plt.subplots(figsize=(5, 5))
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=range(10))
-    disp.plot(cmap=plt.cm.Blues)
-    plt.title("MNIST Confusion Matrix")
-    plt.show()
+    disp.plot(cmap=plt.cm.Blues, ax=ax)
+    ax.set_title("MNIST Confusion Matrix")
+    plt.show(block=False)
 
-threading.Thread(target=show_confusion_matrix).start()
+def plot_training_curves():
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
-# Tkinter 主迴圈
-root.mainloop()
+    axes[0].plot(history.history['accuracy'], label='Train Accuracy')
+    axes[0].plot(history.history['val_accuracy'], label='Validation Accuracy')
+    axes[0].set_title('Accuracy vs Epochs')
+    axes[0].legend()
+
+    axes[1].plot(history.history['loss'], label='Train Loss')
+    axes[1].plot(history.history['val_loss'], label='Validation Loss')
+    axes[1].set_title('Loss vs Epochs')
+    axes[1].legend()
+
+    fig.tight_layout()
+    plt.show(block=False)
+
+# Call analysis after GUI closes
+show_confusion_matrix()
+plot_training_curves()
+
+# Evaluate test set and print detailed stats
+test_loss, test_acc = model.evaluate(x_test, y_test, verbose=0)
+y_true = np.argmax(y_test, axis=1)
+y_pred_classes = np.argmax(y_pred, axis=1)
+total_samples = len(y_true)
+correct_count = np.sum(y_true == y_pred_classes)
+wrong_count = total_samples - correct_count
+accuracy = correct_count / total_samples * 100
+error_rate = wrong_count / total_samples * 100
+
+print(f"Test accuracy: {test_acc:.4f}, Test loss: {test_loss:.4f}")
+print(f"Total: {total_samples} | Correct: {correct_count} | Wrong: {wrong_count} | Accuracy: {accuracy:.2f}% | Error Rate: {error_rate:.2f}%")
